@@ -1,0 +1,16 @@
+[package]
+name = "sample-test"
+version = "0.1.0"
+license = "Apache-2.0"
+description = "Sampling strategies and machinery for testing arbitrary data"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[workspace]
+members = ["sample-std"]
+
+[dependencies]
+lazy_static = "1.4"
+quickcheck="1.0"
+sample-std = { path = "sample-std" }
