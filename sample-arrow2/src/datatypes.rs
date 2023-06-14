@@ -58,43 +58,50 @@ pub fn sample_flat() -> DataTypeSampler {
     ]))
 }
 
-pub fn sample_nested<N, V, F>(names: N, nullable: V, inner: F) -> DataTypeSampler
-where
-    N: Sample<Output = String> + Clone + Send + Sync + 'static,
-    V: Sample<Output = bool> + Clone + Send + Sync + 'static,
-    F: Fn() -> DataTypeSampler,
-{
-    let field = || FieldSampler {
-        names: names.clone(),
-        nullable: nullable.clone(),
-        inner: inner(),
-    };
-    Box::new(choice([
-        Box::new(sample_flat()) as DataTypeSampler,
-        Box::new(
-            VecSampler {
-                length: 1..4,
-                el: field(),
-            }
-            .wrap(|_| std::iter::empty(), DataType::Struct),
-        ),
-        Box::new(field().wrap(|_| std::iter::empty(), |f| DataType::List(Box::new(f)))),
-    ]))
+pub struct ArbitraryDataType<N, V, B, F> {
+    pub names: N,
+    pub nullable: V,
+    pub struct_branch: B,
+    pub flat: F,
 }
 
-pub fn sample_data_type<N, V>(depth: usize, names: N, nullable: V) -> DataTypeSampler
+impl<N, V, B, F> ArbitraryDataType<N, V, B, F>
 where
     N: Sample<Output = String> + Clone + Send + Sync + 'static,
     V: Sample<Output = bool> + Clone + Send + Sync + 'static,
+    B: Sample<Output = usize> + Clone + Send + Sync + 'static,
+    F: Fn() -> DataTypeSampler,
 {
-    let flats = sample_flat();
-    if depth == 0 {
-        flats
-    } else {
-        let inner = || sample_data_type(depth - 1, names.clone(), nullable.clone());
+    pub fn sample_nested<IF>(&self, inner: IF) -> DataTypeSampler
+    where
+        IF: Fn() -> DataTypeSampler,
+    {
+        let field = || FieldSampler {
+            names: self.names.clone(),
+            nullable: self.nullable.clone(),
+            inner: inner(),
+        };
+
         Box::new(choice([
-            sample_nested(names.clone(), nullable.clone(), inner),
-            flats,
+            Box::new((self.flat)()) as DataTypeSampler,
+            Box::new(
+                VecSampler {
+                    length: self.struct_branch.clone(),
+                    el: field(),
+                }
+                .wrap(|_| std::iter::empty(), DataType::Struct),
+            ),
+            Box::new(field().wrap(|_| std::iter::empty(), |f| DataType::List(Box::new(f)))),
         ]))
+    }
+
+    pub fn sample_depth(&self, depth: usize) -> DataTypeSampler {
+        let flats = (self.flat)();
+        if depth == 0 {
+            flats
+        } else {
+            let inner = || self.sample_depth(depth - 1);
+            Box::new(choice([self.sample_nested(inner), flats]))
+        }
     }
 }
