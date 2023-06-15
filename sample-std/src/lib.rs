@@ -470,8 +470,6 @@ where
     }
 
     fn shrink(&self, v: Self::Output) -> Shrunk<'_, Self::Output> {
-        // let v2 = v.clone();
-        // let i2 = self.el.clone();
         Box::new(self.length.shrink(v.len()).flat_map(move |new_len| {
             assert!(new_len < v.len());
             let gap = v.len() - new_len;
