@@ -1,0 +1,22 @@
+[package]
+name = "sample-test-macros"
+version = "0.1.0"
+license = "Apache-2.0"
+description = "proc-macros used by sample-test"
+edition = "2021"
+
+[lib]
+name = "sample_test_macros"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+lazy_static = "1.4"
+proc-macro2 = "1.0"
+quote = "1.0"
+sample-std = { path = "../sample-std" }
+syn = { version = "1.0", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+quickcheck = "1.0"
+sample-test = { path = ".." }
