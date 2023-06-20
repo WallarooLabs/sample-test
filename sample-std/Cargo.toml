@@ -12,6 +12,7 @@ quickcheck="1.0"
 rand = { version = "0.8", default-features = false, features = ["getrandom", "small_rng", "alloc"] }
 rand_regex = { version = "0.15" }
 regex = "1.8"
+casey = "0.4"
 
 [dev-dependencies]
 sample-test = { path = "..",  version = "0.1.0" }
