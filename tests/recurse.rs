@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use once_cell::sync::Lazy;
 use sample_std::{
     choice,
     recursive::{Recursion, RecursiveSampler},
     Random, Regex, Sample, VecSampler,
 };
-use sample_test::{lazy_static, sample_test};
+use sample_test::sample_test;
 
 #[derive(Clone, Debug)]
 pub enum Json {
@@ -101,7 +102,7 @@ impl Tree {
 
 pub type TreeSampler = Box<dyn Sample<Output = Tree> + Send + Sync>;
 
-pub fn sample_tree<LS>(depth: Range<usize>, branch: Range<usize>, leaf: LS) -> TreeSampler
+pub fn tree_sampler<LS>(depth: Range<usize>, branch: Range<usize>, leaf: LS) -> TreeSampler
 where
     LS: Sample<Output = usize> + Clone + Send + Sync + 'static,
 {
@@ -128,24 +129,18 @@ where
     inner
 }
 
-lazy_static! {
-    static ref TREE: TreeSampler = sample_tree(2..5, 0..3, 0..100);
-}
-
 #[sample_test]
-fn tree_bounds(#[sample(TREE)] tree: Tree) {
+fn tree_bounds(#[sample(tree_sampler(2..5, 0..3, 0..100))] tree: Tree) {
     assert!(tree.depth() >= 2);
     assert!(tree.depth() < 5);
 }
 
-lazy_static! {
-    static ref JSON: JsonTree = JsonTree {
-        depth: Some(0..3),
-        node: JsonSampler { branch: 1..10 }
-    };
-}
+static JSON: Lazy<JsonTree> = Lazy::new(|| JsonTree {
+    depth: Some(0..3),
+    node: JsonSampler { branch: 1..10 },
+});
 
 #[sample_test]
-fn json(#[sample(JSON)] json: Json) {
+fn json(#[sample(JSON.clone())] json: Json) {
     assert!(json.depth() < 4);
 }

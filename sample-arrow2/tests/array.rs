@@ -4,7 +4,7 @@ use sample_arrow2::{
     datatypes::{sample_flat, ArbitraryDataType},
 };
 use sample_std::{Chained, Chance, Regex};
-use sample_test::{lazy_static, sample_test};
+use sample_test::sample_test;
 use std::boxed::Box;
 
 fn deep_array(depth: usize) -> ChainedArraySampler {
@@ -29,12 +29,8 @@ fn deep_array(depth: usize) -> ChainedArraySampler {
     )
 }
 
-lazy_static! {
-    static ref DEEP_LIST: ChainedArraySampler = deep_array(3);
-}
-
 #[sample_test]
-fn list_equality(#[sample(DEEP_LIST)] list: Chained<DataType, Box<dyn Array>>) {
+fn list_equality(#[sample(deep_array(3))] list: Chained<DataType, Box<dyn Array>>) {
     let mut list = list.value.clone();
     assert_eq!(list.len(), 10);
     assert_eq!(list, list);

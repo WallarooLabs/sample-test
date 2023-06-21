@@ -1,11 +1,10 @@
 use sample_arrow2::{
     array::ArbitraryArray,
-    chunk::{ArbitraryChunk, ChainedChunk, ChainedMultiChunk, ChunkSampler, MultiChunkSampler},
+    chunk::{ArbitraryChunk, ChainedChunk, ChainedMultiChunk},
     datatypes::{sample_flat, ArbitraryDataType},
 };
 use sample_std::{Chance, Regex};
-use sample_test::{lazy_static, sample_test};
-use std::boxed::Box;
+use sample_test::sample_test;
 
 fn deep_chunk(depth: usize, len: usize) -> ArbitraryChunk<Regex, Chance> {
     let names = Regex::new("[a-z]{4,8}");
@@ -33,19 +32,14 @@ fn deep_chunk(depth: usize, len: usize) -> ArbitraryChunk<Regex, Chance> {
     }
 }
 
-lazy_static! {
-    static ref DEEP_CHUNK: ChunkSampler = deep_chunk(3, 100).sample_one();
-    static ref MANY_DEEP_CHUNK: MultiChunkSampler = deep_chunk(3, 100).sample_many(2..10);
-}
-
 #[sample_test]
-fn arbitrary_chunk(#[sample(DEEP_CHUNK)] chunk: ChainedChunk) {
+fn arbitrary_chunk(#[sample(deep_chunk(3, 100).sample_one())] chunk: ChainedChunk) {
     let chunk = chunk.value;
     assert_eq!(chunk, chunk);
 }
 
 #[sample_test]
-fn arbitrary_chunks(#[sample(MANY_DEEP_CHUNK)] chunk: ChainedMultiChunk) {
+fn arbitrary_chunks(#[sample(deep_chunk(3, 100).sample_many(2..10))] chunk: ChainedMultiChunk) {
     let chunk = chunk.value;
     assert_eq!(chunk, chunk);
 }
