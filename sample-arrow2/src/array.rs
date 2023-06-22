@@ -69,7 +69,7 @@ where
                     .iter()
                     .map(|f| {
                         ArbitraryArray {
-                            len: (len.end - 1)..len.end,
+                            len: (len.end.saturating_sub(1))..len.end,
                             is_nullable: f.is_nullable,
                             ..self.clone()
                         }
