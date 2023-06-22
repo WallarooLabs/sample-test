@@ -207,6 +207,102 @@ where
     }
 }
 
+macro_rules! replace_expr {
+    ($_t:tt $sub:expr) => {
+        $sub
+    };
+}
+
+macro_rules! none_pad {
+    (($cur:ident) $($post: ident)*) => {
+        (Some($cur), $(replace_expr!($post  None)),*)
+    };
+    ($($pre:ident)+ ($cur:ident) $($post: ident)*) => {
+        ($(replace_expr!($pre  None)),*, Some($cur), $(replace_expr!($post  None)),*)
+    };
+}
+
+macro_rules! shrink_tuple {
+    ($v:ident () $($sample: ident)*) => {
+        let ($(casey::lower!($sample)),*) = $v.clone();
+        let r = std::iter::empty();
+        shrink_tuple!(r $v () ($($sample)*));
+    };
+    ($r:ident $v:ident () ($cur:ident $($sample: ident)*)) => {
+        let (casey::lower!(ref $cur), $(casey::lower!(ref $sample)),*) = $v;
+        let r = $r.chain(
+            $cur.shrink(casey::lower!($cur).clone()).map(move |$cur| {
+                none_pad!(($cur) $($sample)*)
+            })
+        );
+        shrink_tuple!(r $v ($cur) ($($sample)*));
+    };
+    ($r:ident $v:ident ($($pre:ident)+) ($cur:ident $($sample: ident)*)) => {
+        let ($(casey::lower!(ref $pre)),*, casey::lower!(ref $cur), $(casey::lower!(ref $sample)),*) = $v;
+        let r = $r.chain(
+            $cur.shrink(casey::lower!($cur).clone()).map(move |$cur| {
+                none_pad!($($pre)* ($cur) $($sample)*)
+            })
+        );
+        shrink_tuple!(r $v ($($pre)* $cur) ($($sample)*));
+    };
+    ($r:ident $v:ident ($($pre:ident)*) ()) => {
+        let ($(casey::lower!($pre)),*) = $v;
+        return Box::new($r.map(move |($($pre),*)| {
+            ($($pre.unwrap_or(casey::lower!($pre).clone())),*)
+        }))
+    };
+}
+
+macro_rules! sample_tuple {
+    ($($name: ident),*) => {
+
+impl<$($name),*> Sample for ($($name),*,)
+where
+    $($name: Sample + Clone),*,
+    $($name::Output: Clone),*,
+{
+    type Output = ($($name::Output),*,);
+
+    #[allow(non_snake_case)]
+    fn generate(&self, r: &mut Random) -> Self::Output {
+        let ($(casey::lower!($name)),*,) = &self;
+        ($(casey::lower!($name).generate(r)),*,)
+    }
+
+    #[allow(non_snake_case)]
+    fn shrink(&self, v: Self::Output) -> Shrunk<Self::Output> {
+        let ($($name),*,) = self;
+        shrink_tuple!(v () $($name)*);
+    }
+}
+
+    }
+}
+
+impl<A> Sample for (A,)
+where
+    A: Sample,
+{
+    type Output = (A::Output,);
+
+    fn generate(&self, g: &mut Random) -> Self::Output {
+        (self.0.generate(g),)
+    }
+
+    fn shrink(&self, v: Self::Output) -> Shrunk<Self::Output> {
+        Box::new(self.0.shrink(v.0).map(|v| (v,)))
+    }
+}
+
+sample_tuple!(A, B);
+sample_tuple!(A, B, C);
+sample_tuple!(A, B, C, D);
+sample_tuple!(A, B, C, D, E);
+sample_tuple!(A, B, C, D, E, F);
+sample_tuple!(A, B, C, D, E, F, G);
+sample_tuple!(A, B, C, D, E, F, G, H);
+
 #[derive(Clone, Debug)]
 pub struct ChainResample<S, F> {
     supersampler: S,
