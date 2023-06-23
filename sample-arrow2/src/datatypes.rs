@@ -1,5 +1,7 @@
+//! Samplers for generating an arrow [`DataType`].
+
 use arrow2::datatypes::{DataType, Field};
-use sample_std::{choice, Always, Random, Sample, VecSampler};
+use sample_std::{sampler_choice, Always, Random, Sample, VecSampler};
 
 pub type DataTypeSampler = Box<dyn Sample<Output = DataType> + Send + Sync>;
 
@@ -44,7 +46,7 @@ where
 }
 
 pub fn sample_flat() -> DataTypeSampler {
-    Box::new(choice([
+    Box::new(sampler_choice([
         Always(DataType::Float32),
         Always(DataType::Float64),
         Always(DataType::Int8),
@@ -82,16 +84,16 @@ where
             inner: inner(),
         };
 
-        Box::new(choice([
+        Box::new(sampler_choice([
             Box::new((self.flat)()) as DataTypeSampler,
             Box::new(
                 VecSampler {
                     length: self.struct_branch.clone(),
                     el: field(),
                 }
-                .wrap(|_| std::iter::empty(), DataType::Struct),
+                .try_convert(DataType::Struct, |_| None),
             ),
-            Box::new(field().wrap(|_| std::iter::empty(), |f| DataType::List(Box::new(f)))),
+            Box::new(field().try_convert(|f| DataType::List(Box::new(f)), |_| None)),
         ]))
     }
 
@@ -101,7 +103,7 @@ where
             flats
         } else {
             let inner = || self.sample_depth(depth - 1);
-            Box::new(choice([self.sample_nested(inner), flats]))
+            Box::new(sampler_choice([self.sample_nested(inner), flats]))
         }
     }
 }

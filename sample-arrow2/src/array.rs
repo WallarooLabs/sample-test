@@ -1,3 +1,5 @@
+//! Chained samplers for generating arbitrary `Box<dyn Array>` arrow arrays.
+
 use std::ops::Range;
 
 use arrow2::{array::Array, datatypes::DataType};

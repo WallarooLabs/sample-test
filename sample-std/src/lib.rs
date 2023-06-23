@@ -1,3 +1,86 @@
+//! Core sampling strategies, along with useful implementations for samplers on
+//! types from [`std`] and the [`quickcheck`] crate.
+//!
+//! The core of this library is the [`Sample`] trait, which uses [`Random`] to
+//! generate arbitrary values from a sampled `Output` type with a custom
+//! "sampling strategy". It also defines a procedure for "shrinking" generated
+//! values, which can be used to generate simple counterexamples against
+//! expected properties.
+//!
+//! This library is generally intended for usage alongside the [`sample_test`][1]
+//! crate. See that crate for macros and examples for using samplers within unit
+//! tests.
+//!
+//! # Sampling Strategies
+//!
+//! The simplest [`Sample`] implementation is for [`Range`]. It is a sampler
+//! that generates values uniformly from the given range, and attempts to shrink
+//! down to the start of the range:
+//!
+//! ```
+//! use sample_std::{Sample, Random};
+//!
+//! let s = 10..100;
+//! let v = s.generate(&mut Random::new());
+//! assert!(s.contains(&v));
+//! let mut shrunk = s.shrink(v);
+//! assert_eq!(shrunk.next(), Some(s.start));
+//! if v > s.start {
+//!     assert!(shrunk.next().unwrap() < v)
+//! }
+//! ```
+//!
+//! Samplers are defined for tuples of samplers up to size 8, which can be
+//! used in concert with [`Sample::try_convert`] to combine samplers into a
+//! sampler for a larger type:
+//!
+//! ```
+//! use sample_std::{Chance, Sample, VecSampler, choice};
+//!
+//! struct Large {
+//!     values: Vec<usize>,
+//!     is_blue: bool,
+//!     name: String,
+//! }
+//!
+//! let sampler = (
+//!     VecSampler { length: 0..10, el: 5..20 },
+//!     Chance(0.5),
+//!     choice(["cora".to_string(), "james".to_string()])
+//! ).try_convert(
+//!     |(values, is_blue, name)| Large { values, is_blue, name },
+//!     |large| Some((large.values, large.is_blue, large.name))
+//! );
+//! ```
+//!
+//! For an example of sampling an `enum`, see [`sampler_choice`].
+//!
+//! # Prior Work
+//!
+//! This crate is heavily inspired by [`quickcheck`]. It builds upon it, in
+//! particular by defining samplers for [`Arbitrary`] (see [`arbitrary`]). Many
+//! methods and structs in here were derived from their [`quickcheck`]
+//! counterparts.
+//!
+//! It attempts to iterate and improve on the [`quickcheck`] core idea:
+//!
+//! - Allow definition of multiple sampling strategies for the same type.
+//! - No need to define newtypes for custom sampling strategies.
+//!
+//! There is still some cruft and weirdness from this early attempt to combine
+//! these worldviews:
+//!
+//! - The concept of `size` isn't really necessary in a world with sampling
+//!   strategies.
+//! - The [`Random`] struct could probably just become a type definition around
+//!   the underlying `rng`.
+//!
+//! The core idea for sampling "strategies" comes from [`proptest`][2], which
+//! uses macros instead of combinators for composition, and has more complex
+//! shrinking functionality.
+//!
+//! [1]: https://docs.rs/sample_test/latest/sample_test/
+//! [2]: https://docs.rs/proptest/latest/proptest/
 pub use quickcheck::{Arbitrary, Gen, TestResult, Testable};
 use std::{marker::PhantomData, ops::Range};
 
@@ -9,40 +92,32 @@ use rand::{
 
 pub mod recursive;
 
-/// [Random] represents a PRNG.
+/// [`Random`] represents a PRNG.
 ///
-/// It is a reimplementation of [quickcheck::Gen], which does not export the
+/// It is a reimplementation of [`quickcheck::Gen`], which does not export the
 /// methods we need to properly generate random values.
 ///
 /// It is unspecified whether this is a secure RNG or not. Therefore, callers
 /// should assume it is insecure.
 pub struct Random {
     pub rng: rand::rngs::SmallRng,
-    size: usize,
 }
 
 impl Random {
     pub fn arbitrary<T: Arbitrary>(&self) -> T {
-        let mut qcg = Gen::new(self.size);
+        let mut qcg = Gen::new(100);
 
         Arbitrary::arbitrary(&mut qcg)
     }
 
-    /// Returns a `Gen` with the given size configuration.
-    ///
-    /// The `size` parameter controls the size of random values generated.
-    /// For example, it specifies the maximum length of a randomly generated
-    /// vector, but is and should not be used to control the range of a
-    /// randomly generated number. (Unless that number is used to control the
-    /// size of a data structure.)
-    pub fn new(size: usize) -> Self {
+    /// Returns a new [Random] instance.
+    pub fn new() -> Self {
         Random {
             rng: rand::rngs::SmallRng::from_entropy(),
-            size: size,
         }
     }
 
-    pub fn from_seed(seed: u64, size: usize) -> Self {
+    pub fn from_seed(seed: u64) -> Self {
         let seed: Vec<u8> = seed
             .to_be_bytes()
             .into_iter()
@@ -51,13 +126,7 @@ impl Random {
             .collect();
         Random {
             rng: rand::rngs::SmallRng::from_seed(seed[0..32].try_into().unwrap()),
-            size: size,
         }
-    }
-
-    /// Returns the size configured with this generator.
-    pub fn size(&self) -> usize {
-        self.size
     }
 
     /// Choose among the possible alternatives in the slice given. If the slice
@@ -83,7 +152,7 @@ impl Random {
     }
 }
 
-/// An [Iterator] of "smaller" values derived from a given value.
+/// An [`Iterator`] of "smaller" values derived from a given value.
 pub type Shrunk<'a, T> = Box<dyn Iterator<Item = T> + 'a>;
 
 /// User-defined strategies for generating and shrinking an `Output` type.
@@ -99,41 +168,70 @@ pub trait Sample {
         Box::new(std::iter::empty())
     }
 
-    fn wrap<T, I, II, F>(self, into: I, from: F) -> FlatMap<Self, I, F>
+    /// Convert this sampler into a new sampler with `from` and `try_into`
+    /// functions:
+    ///
+    /// ```
+    /// use sample_std::{Sample, VecSampler};
+    ///
+    /// struct Wrapper {
+    ///     vec: Vec<usize>
+    /// }
+    ///
+    /// impl Wrapper {
+    ///     fn new(vec: Vec<usize>) -> Self {
+    ///         Self { vec }
+    ///     }
+    /// }
+    ///
+    /// let sampler = VecSampler { length: 10..20, el: 1..5 }.try_convert(
+    ///     Wrapper::new,
+    ///     |w| Some(w.vec)
+    /// );
+    /// ```
+    ///
+    /// [`Sample::generate`] will use `from` to convert the inner sampled value
+    /// to the desired type.
+    ///
+    /// [`Sample::shrink`] will use `try_into` to convert the desired type back
+    /// to the inner sampled type, if possible. The inner `shrink` method will
+    /// be called on that type, and all values will be converted back to the
+    /// target type again with `into`.
+    fn try_convert<T, I, F>(self, from: F, try_into: I) -> TryConvert<Self, F, I>
     where
         Self: Sized,
-        I: Fn(T) -> II,
-        II: IntoIterator<Item = Self::Output> + 'static,
         F: Fn(Self::Output) -> T + Copy,
+        I: Fn(T) -> Option<Self::Output>,
     {
-        FlatMap {
+        TryConvert {
             inner: self,
-            into,
             from,
+            try_into,
         }
     }
 
+    /// "Zip" two samplers together. Functionally equivalent to `(self, other)`.
     fn zip<OS>(self, other: OS) -> Zip<Self, OS>
     where
         Self: Sized,
         OS: Sample,
     {
-        Zip { a: self, b: other }
+        Zip { t: (self, other) }
     }
 
-    /// "Resampling" method for chaining generators.
+    /// "Resampling" method for chaining samplers.
     ///
     /// For sampling, use this sampler as a  "supersampler" that creates a
     /// "seed" value. The provided function then converts this seed into an
     /// inner sampler that is used to generate a final value.
     ///
-    /// This value is returned within a `Chained` wrapper that also captures the
+    /// This value is returned within a [Chained] wrapper that also captures the
     /// seed. This allows us to use the "supersampler" in the shrinking process.
     /// This then shrinks the seed, and then "resamples" (generates new samples)
     /// with the shrunk inner sampler.
     ///
-    /// Note that this will can only perform a very shallow search of the shrunk
-    /// inner sampler space.
+    /// Note that the resulting sampler will only perform a very shallow search
+    /// (`subsamples`) of the shrunk inner sampler space.
     fn chain_resample<F, RS>(self, transform: F, subsamples: usize) -> ChainResample<Self, F>
     where
         Self: Sized,
@@ -148,19 +246,19 @@ pub trait Sample {
     }
 }
 
+/// See [`Sample::try_convert`].
 #[derive(Clone)]
-pub struct FlatMap<P, I, F> {
+pub struct TryConvert<P, F, I> {
     inner: P,
-    into: I,
     from: F,
+    try_into: I,
 }
 
-impl<P, II, I, F, T> Sample for FlatMap<P, I, F>
+impl<P, F, I, T> Sample for TryConvert<P, F, I>
 where
     P: Sample,
-    I: Fn(T) -> II,
-    II: IntoIterator<Item = P::Output> + 'static,
     F: Fn(P::Output) -> T + Copy,
+    I: Fn(T) -> Option<P::Output>,
 {
     type Output = T;
 
@@ -170,7 +268,7 @@ where
 
     fn shrink(&self, v: Self::Output) -> Shrunk<Self::Output> {
         Box::new(
-            (self.into)(v)
+            (self.try_into)(v)
                 .into_iter()
                 .flat_map(|v| P::shrink(&self.inner, v))
                 .map(self.from),
@@ -178,10 +276,10 @@ where
     }
 }
 
+/// See [`Sample::zip`].
 #[derive(Clone)]
 pub struct Zip<A, B> {
-    a: A,
-    b: B,
+    t: (A, B),
 }
 
 impl<A, B> Sample for Zip<A, B>
@@ -194,16 +292,11 @@ where
     type Output = (A::Output, B::Output);
 
     fn generate(&self, g: &mut Random) -> Self::Output {
-        (self.a.generate(g), self.b.generate(g))
+        self.t.generate(g)
     }
 
     fn shrink(&self, v: Self::Output) -> Shrunk<Self::Output> {
-        let (a, b) = v;
-        Box::new(self.a.shrink(a.clone()).flat_map(move |sa| {
-            std::iter::once(b.clone())
-                .chain(self.b.shrink(b.clone()))
-                .map(move |sb| (sa.clone(), sb))
-        }))
+        self.t.shrink(v)
     }
 }
 
@@ -259,7 +352,7 @@ macro_rules! sample_tuple {
 
 impl<$($name),*> Sample for ($($name),*,)
 where
-    $($name: Sample + Clone),*,
+    $($name: Sample),*,
     $($name::Output: Clone),*,
 {
     type Output = ($($name::Output),*,);
@@ -303,6 +396,7 @@ sample_tuple!(A, B, C, D, E, F);
 sample_tuple!(A, B, C, D, E, F, G);
 sample_tuple!(A, B, C, D, E, F, G, H);
 
+/// See [`Sample::chain_resample`].
 #[derive(Clone, Debug)]
 pub struct ChainResample<S, F> {
     supersampler: S,
@@ -310,6 +404,7 @@ pub struct ChainResample<S, F> {
     subsamples: usize,
 }
 
+/// Capture the `seed` used to generate the given `value`.
 #[derive(Clone, Debug)]
 pub struct Chained<S, V> {
     seed: S,
@@ -334,7 +429,7 @@ where
 
     fn shrink(&self, v: Self::Output) -> Shrunk<Self::Output> {
         Box::new(self.supersampler.shrink(v.seed).flat_map(|shrunk_seed| {
-            let mut g = Random::new(1000);
+            let mut g = Random::new();
             let sampler = (self.transform)(shrunk_seed.clone());
             (0..self.subsamples).map(move |_| Chained {
                 seed: shrunk_seed.clone(),
@@ -368,6 +463,8 @@ impl<T> Sample for Box<dyn Sample<Output = T> + Send + Sync> {
     }
 }
 
+/// Generate a boolean value with the specified probability (in the range
+/// `0..=1`).
 #[derive(Debug, Clone)]
 pub struct Chance(pub f32);
 
@@ -379,7 +476,7 @@ impl Sample for Chance {
     }
 }
 
-/// Bridge for creating a [Sample] from an [Arbitrary] type.
+/// Bridge for creating a [`Sample`] from an [`Arbitrary`] type.
 #[derive(Clone)]
 pub struct ArbitrarySampler<T> {
     size: Option<usize>,
@@ -406,7 +503,7 @@ impl<T: Arbitrary> Sample for ArbitrarySampler<T> {
     }
 }
 
-/// Generate an arbitrary type.
+/// Sampler for any type implementing [`Arbitrary`].
 pub fn arbitrary<T: Arbitrary>() -> ArbitrarySampler<T> {
     ArbitrarySampler {
         size: None,
@@ -415,7 +512,7 @@ pub fn arbitrary<T: Arbitrary>() -> ArbitrarySampler<T> {
     }
 }
 
-/// Generate a non-NaN [f32]
+/// Sampler for non-NaN [f32]
 pub fn valid_f32() -> ArbitrarySampler<f32> {
     ArbitrarySampler {
         size: None,
@@ -424,7 +521,7 @@ pub fn valid_f32() -> ArbitrarySampler<f32> {
     }
 }
 
-/// Generate a non-NaN [f64]
+/// Sampler for non-NaN [f64]
 pub fn valid_f64() -> ArbitrarySampler<f64> {
     ArbitrarySampler {
         size: None,
@@ -433,6 +530,7 @@ pub fn valid_f64() -> ArbitrarySampler<f64> {
     }
 }
 
+/// Sampler that always generates a fixed value.
 #[derive(Debug, Clone)]
 pub struct Always<T>(pub T);
 
@@ -444,23 +542,103 @@ impl<T: Clone> Sample for Always<T> {
     }
 }
 
-pub fn choice<C, II>(choices: II) -> Choice<C>
+/// Sample from a list of `choice` values.
+///
+/// [`Sample::shrink`] will attempt to shrink down to the first element in the
+/// [`Choice`]:
+///
+/// ```
+/// use sample_std::{Random, Sample, choice};
+///
+/// let sampler = choice(["cora", "coraline"]);
+/// let name = sampler.generate(&mut Random::new());
+/// assert!(name.starts_with("cora"));
+///
+/// assert_eq!(sampler.shrink("coraline").next(), Some("cora"));
+/// ```
+pub fn choice<T, II>(choices: II) -> Choice<T>
 where
-    II: IntoIterator<Item = C>,
-    C: Sample,
-    <C as Sample>::Output: Clone,
+    T: Clone + PartialEq,
+    II: IntoIterator<Item = T>,
 {
     Choice {
         choices: choices.into_iter().collect(),
     }
 }
 
+/// See [choice].
 #[derive(Clone, Debug)]
-pub struct Choice<C> {
+pub struct Choice<T> {
+    pub choices: Vec<T>,
+}
+
+impl<T> Sample for Choice<T>
+where
+    T: Clone + PartialEq,
+{
+    type Output = T;
+
+    fn generate(&self, g: &mut Random) -> Self::Output {
+        g.choose(&self.choices).unwrap().clone()
+    }
+
+    fn shrink(&self, v: Self::Output) -> Shrunk<'_, Self::Output> {
+        let ix = self.choices.iter().position(|el| el == &v).unwrap_or(0);
+        Box::new((0..ix).map(|shrunk_ix| self.choices[shrunk_ix].clone()))
+    }
+}
+
+/// Sample values from a sampler randomly drawn from a list of `choices`.
+///
+/// `shrink` attempts to run the [`Sample::shrink`] method from each specified
+/// sampler in order. This allows [`sampler_choice`] to work with choices that
+/// generate `enum` variants (e.g. via [`Sample::try_convert`]):
+///
+/// ```
+/// use std::boxed::Box;
+/// use sample_std::{Sample, sampler_choice};
+///
+/// #[derive(Clone)]
+/// enum Widget {
+///     Bib(usize),
+///     Bob(usize)
+/// }
+///
+/// type WidgetSampler = Box<dyn Sample<Output = Widget>>;
+///
+/// let bibs: WidgetSampler = Box::new((0..100).try_convert(Widget::Bib, |v| match v {
+///     Widget::Bib(u) => Some(u),
+///     _ => None,
+/// }));
+///
+/// let bobs: WidgetSampler = Box::new((100..200).try_convert(Widget::Bob, |v| match v {
+///     Widget::Bob(u) => Some(u),
+///     _ => None,
+/// }));
+///
+/// let widgets = sampler_choice([bibs, bobs]);
+/// ```
+///
+/// This may lead to unexpected shrinking behavior if every sampler in the
+/// [`SamplerChoice`] can shrink a given value.
+pub fn sampler_choice<C, II>(choices: II) -> SamplerChoice<C>
+where
+    II: IntoIterator<Item = C>,
+    C: Sample,
+    <C as Sample>::Output: Clone,
+{
+    SamplerChoice {
+        choices: choices.into_iter().collect(),
+    }
+}
+
+/// See [`sampler_choice`].
+#[derive(Clone, Debug)]
+pub struct SamplerChoice<C> {
     pub choices: Vec<C>,
 }
 
-impl<C> Choice<C> {
+impl<C> SamplerChoice<C> {
     pub fn or(self, other: Self) -> Self {
         Self {
             choices: self
@@ -472,7 +650,7 @@ impl<C> Choice<C> {
     }
 }
 
-impl<C, T> Sample for Choice<C>
+impl<C, T> Sample for SamplerChoice<C>
 where
     C: Sample<Output = T>,
     T: Clone + 'static,
@@ -512,6 +690,10 @@ where
     }
 }
 
+/// Sample strings given a "valid" regular expression.
+///
+/// Shrinking is done by shortening the string and testing if the expression
+/// still matches.
 #[derive(Clone, Debug)]
 pub struct Regex {
     pub dist: rand_regex::Regex,
@@ -519,10 +701,11 @@ pub struct Regex {
 }
 
 impl Regex {
-    pub fn new(pat: &str) -> Self {
+    /// Create a new [Regex] sampler with the given `pattern` string.
+    pub fn new(pattern: &str) -> Self {
         Regex {
-            dist: rand_regex::Regex::compile(pat, 100).unwrap(),
-            re: regex::Regex::new(pat).unwrap(),
+            dist: rand_regex::Regex::compile(pattern, 100).unwrap(),
+            re: regex::Regex::new(pattern).unwrap(),
         }
     }
 }
@@ -536,6 +719,9 @@ impl Sample for Regex {
 
     fn shrink(&self, v: Self::Output) -> Shrunk<'_, Self::Output> {
         let re = self.re.clone();
+        // this obviously could be improved via deeper integration with the
+        // underlying regex, but the generation library does not appear to
+        // expose interfaces to do so
         Box::new(Iterator::flat_map(0..v.len(), move |ix| {
             let mut shrunk: String = String::with_capacity(v.len());
             shrunk.push_str(&v[0..ix]);
@@ -550,6 +736,11 @@ impl Sample for Regex {
     }
 }
 
+/// Sample a [`Vec`] with a length drawn from a `usize` [`Sample`] and elements
+/// drawn from the `el` sampler.
+///
+/// Shrinking attempts to first shrink the length, and then shrink each element
+/// within the [`Vec`].
 #[derive(Debug, Clone)]
 pub struct VecSampler<S, I> {
     pub length: S,
@@ -596,9 +787,11 @@ where
     }
 }
 
-/// Use a [Vec] of `samplers` to generate a new [Vec] of equal length, where
-/// each sampler in the [Vec] is used to sample the value at its corresponding
+/// Use a [`Vec`] of `samplers` to generate a new [`Vec`] of equal length, where
+/// each sampler in the [`Vec`] is used to sample the value at its corresponding
 /// position.
+///
+/// Shrinking proceeds per-element within the generated [`Vec`] in index order.
 pub fn sample_all<S>(samplers: Vec<S>) -> SampleAll<S>
 where
     S: Sample,
@@ -606,6 +799,7 @@ where
     SampleAll { samplers }
 }
 
+/// See [`sample_all`].
 pub struct SampleAll<S> {
     samplers: Vec<S>,
 }

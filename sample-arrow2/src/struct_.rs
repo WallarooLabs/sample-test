@@ -1,4 +1,6 @@
-use crate::{array::ArraySampler, validity::generate_validity};
+//! Samplers for generating an arrow [`StructArray`].
+
+use crate::{array::ArraySampler, generate_validity};
 use arrow2::{
     array::{Array, StructArray},
     datatypes::DataType,

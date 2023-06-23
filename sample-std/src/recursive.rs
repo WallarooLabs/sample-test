@@ -1,3 +1,4 @@
+//! Some simple helpers for recursive sampling.
 use crate::{Random, Sample};
 use std::ops::Range;
 

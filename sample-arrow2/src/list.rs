@@ -1,6 +1,8 @@
+//! Samplers for generating an arrow [`ListArray`].
+
 use std::ops::Range;
 
-use crate::{array::ArraySampler, validity::generate_validity};
+use crate::{array::ArraySampler, generate_validity};
 use arrow2::{
     array::{Array, ListArray},
     datatypes::DataType,

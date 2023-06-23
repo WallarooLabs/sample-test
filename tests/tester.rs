@@ -11,7 +11,7 @@ fn test_testable() {
         sum >= a && sum >= b
     }
 
-    let mut r = Random::new(1000);
+    let mut r = Random::new();
     let s = (0..10, 0..10);
     assert!(Testable::test_once(&(test as fn(usize, usize) -> bool), &s, &mut r).is_success());
 

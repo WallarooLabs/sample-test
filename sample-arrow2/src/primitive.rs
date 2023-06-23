@@ -1,3 +1,5 @@
+//! Samplers for generating an arrow [`PrimitiveArray`].
+
 use std::ops::Range;
 
 use arrow2::{
@@ -5,8 +7,8 @@ use arrow2::{
     types::NativeType,
 };
 use sample_std::{
-    arbitrary, choice, valid_f32, valid_f64, Arbitrary, ArbitrarySampler, Random, Sample, Shrunk,
-    VecSampler,
+    arbitrary, sampler_choice, valid_f32, valid_f64, Arbitrary, ArbitrarySampler, Random, Sample,
+    Shrunk, VecSampler,
 };
 
 use crate::ArrowSampler;
@@ -88,16 +90,13 @@ where
         ProtoPrimitiveArray {
             inner: VecSampler { length: len, el },
         }
-        .wrap(
-            |boxed| {
-                if boxed.validity().is_none() {
-                    boxed.as_any().downcast_ref::<PrimitiveArray<T>>().cloned()
-                } else {
-                    None
-                }
-            },
-            PrimitiveArray::boxed,
-        ),
+        .try_convert(PrimitiveArray::boxed, |boxed| {
+            if boxed.validity().is_none() {
+                boxed.as_any().downcast_ref::<PrimitiveArray<T>>().cloned()
+            } else {
+                None
+            }
+        }),
     )
 }
 
@@ -186,7 +185,7 @@ pub fn valid_float_array<V>(len: Range<usize>, null: Option<V>) -> ArrowSampler
 where
     V: Sample<Output = bool> + Clone + Send + Sync + 'static,
 {
-    Box::new(choice(vec![
+    Box::new(sampler_choice(vec![
         // todo: f16
         boxed_primitive(valid_f32(), len.clone(), null.clone()),
         boxed_primitive(valid_f64(), len, null),
@@ -197,7 +196,7 @@ pub fn arbitrary_float_array<V>(len: Range<usize>, null: Option<V>) -> ArrowSamp
 where
     V: Sample<Output = bool> + Clone + Send + Sync + 'static,
 {
-    Box::new(choice(vec![
+    Box::new(sampler_choice(vec![
         // todo: f16
         arbitrary_boxed_primitive::<f32, _>(len.clone(), null.clone()),
         arbitrary_boxed_primitive::<f32, _>(len, null),
@@ -208,7 +207,7 @@ pub fn arbitrary_int_array<V>(len: Range<usize>, null: Option<V>) -> ArrowSample
 where
     V: Sample<Output = bool> + Clone + Send + Sync + 'static,
 {
-    Box::new(choice(vec![
+    Box::new(sampler_choice(vec![
         arbitrary_boxed_primitive::<i8, _>(len.clone(), null.clone()),
         arbitrary_boxed_primitive::<i16, _>(len.clone(), null.clone()),
         arbitrary_boxed_primitive::<i32, _>(len.clone(), null.clone()),
@@ -222,7 +221,7 @@ pub fn arbitrary_uint_array<V>(len: Range<usize>, null: Option<V>) -> ArrowSampl
 where
     V: Sample<Output = bool> + Clone + Send + Sync + 'static,
 {
-    Box::new(choice(vec![
+    Box::new(sampler_choice(vec![
         arbitrary_boxed_primitive::<u8, _>(len.clone(), null.clone()),
         arbitrary_boxed_primitive::<u16, _>(len.clone(), null.clone()),
         arbitrary_boxed_primitive::<u32, _>(len.clone(), null.clone()),
@@ -234,7 +233,7 @@ pub fn valid_primitive<V>(len: Range<usize>, null: Option<V>) -> ArrowSampler
 where
     V: Sample<Output = bool> + Clone + Send + Sync + 'static,
 {
-    Box::new(choice([
+    Box::new(sampler_choice([
         valid_float_array(len.clone(), null.clone()),
         arbitrary_int_array(len.clone(), null.clone()),
         arbitrary_uint_array(len.clone(), null.clone()),
@@ -245,7 +244,7 @@ pub fn arbitrary_primitive<V>(len: Range<usize>, null: Option<V>) -> ArrowSample
 where
     V: Sample<Output = bool> + Clone + Send + Sync + 'static,
 {
-    Box::new(choice([
+    Box::new(sampler_choice([
         arbitrary_float_array(len.clone(), null.clone()),
         arbitrary_int_array(len.clone(), null.clone()),
         arbitrary_uint_array(len.clone(), null.clone()),
@@ -261,7 +260,7 @@ mod tests {
     #[test]
     fn gen_float() {
         let gen = valid_float_array(50..51, Some(Chance(0.5)));
-        let mut r = Random::new(100);
+        let mut r = Random::new();
         let arr = gen.generate(&mut r);
         assert_eq!(arr, arr);
     }
