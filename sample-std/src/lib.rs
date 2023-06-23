@@ -502,7 +502,10 @@ where
 
     fn shrink(&self, v: Self::Output) -> Shrunk<'_, Self::Output> {
         if self.start != v {
-            Box::new((self.start.clone()..v.clone()).into_iter().rev().take(1))
+            Box::new(
+                std::iter::once(self.start.clone())
+                    .chain((self.start.clone()..v.clone()).into_iter().rev().take(1)),
+            )
         } else {
             Box::new(std::iter::empty())
         }
