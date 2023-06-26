@@ -99,16 +99,16 @@ impl Tree {
     }
 }
 
-pub type TreeSampler = Box<dyn Sample<Output = Tree> + Send + Sync>;
+pub type TreeSampler = Box<dyn Sample<Output = Tree> + 'static>;
 
 pub fn tree_sampler<LS>(depth: Range<usize>, branch: Range<usize>, leaf: LS) -> TreeSampler
 where
-    LS: Sample<Output = usize> + Clone + Send + Sync + 'static,
+    LS: Sample<Output = usize> + Clone + 'static,
 {
     let leaf = Box::new(leaf.try_convert(Tree::Leaf, Tree::leaf));
     let mut inner: TreeSampler = leaf.clone();
     for ix in (0..(depth.end - 1)).rev() {
-        let el = if ix > depth.start {
+        let el: TreeSampler = if ix > depth.start {
             Box::new(sampler_choice([leaf.clone(), inner]))
         } else {
             inner
