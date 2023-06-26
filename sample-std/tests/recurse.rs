@@ -3,9 +3,8 @@ use std::ops::Range;
 
 use once_cell::sync::Lazy;
 use sample_std::{
-    choice,
     recursive::{Recursion, RecursiveSampler},
-    Random, Regex, Sample, VecSampler,
+    sampler_choice, Random, Regex, Sample, VecSampler,
 };
 use sample_test::sample_test;
 
@@ -85,17 +84,17 @@ impl Tree {
         }
     }
 
-    fn level(self) -> Box<dyn Iterator<Item = Vec<Tree>>> {
+    fn level(self) -> Option<Vec<Tree>> {
         match self {
-            Tree::Branch(l) => Box::new(std::iter::once(l)),
-            Tree::Leaf(_) => Box::new(std::iter::empty()),
+            Tree::Branch(l) => Some(l),
+            Tree::Leaf(_) => None,
         }
     }
 
-    fn leaf(self) -> impl Iterator<Item = usize> {
+    fn leaf(self) -> Option<usize> {
         match self {
-            Self::Leaf(v) => Some(v).into_iter(),
-            _ => None.into_iter(),
+            Self::Leaf(v) => Some(v),
+            _ => None,
         }
     }
 }
@@ -106,11 +105,11 @@ pub fn tree_sampler<LS>(depth: Range<usize>, branch: Range<usize>, leaf: LS) -> 
 where
     LS: Sample<Output = usize> + Clone + Send + Sync + 'static,
 {
-    let leaf = Box::new(leaf.wrap(Tree::leaf, Tree::Leaf));
+    let leaf = Box::new(leaf.try_convert(Tree::Leaf, Tree::leaf));
     let mut inner: TreeSampler = leaf.clone();
     for ix in (0..(depth.end - 1)).rev() {
         let el = if ix > depth.start {
-            Box::new(choice([leaf.clone(), inner]))
+            Box::new(sampler_choice([leaf.clone(), inner]))
         } else {
             inner
         };
@@ -123,7 +122,7 @@ where
 
         let level = VecSampler { length, el };
 
-        inner = Box::new(level.wrap(Tree::level, Tree::Branch))
+        inner = Box::new(level.try_convert(Tree::Branch, Tree::level))
     }
 
     inner

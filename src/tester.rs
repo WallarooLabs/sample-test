@@ -1,3 +1,13 @@
+//! Test utilities for [`sample_std::Sample`].
+//!
+//! It is a direct port of [`quickcheck::QuickCheck`], with some key differences:
+//!
+//! - We use the [`Debug`] impl of tuples whose parts impl [`Debug`]. This means we
+//!   can create a single general [`Testable::shrink`] definition.
+//! - We use an iterative shrinking process instead of a recursive one (see
+//!   [`Testable::shrink`]). This allows us to halt after a fixed number of
+//!   shrinking steps, which sidesteps accidental infinite shrinking
+//!   implementations and avoids the potential for stack overflows.
 use std::cmp;
 use std::env;
 use std::fmt::Debug;
@@ -32,14 +42,6 @@ fn st_max_tests() -> u64 {
     }
 }
 
-fn st_gen_size() -> usize {
-    let default = 100;
-    match env::var("SAMPLE_TEST_GENERATOR_SIZE") {
-        Ok(val) => val.parse().unwrap_or(default),
-        Err(_) => default,
-    }
-}
-
 fn st_min_tests_passed() -> u64 {
     let default = 0;
     match env::var("SAMPLE_TEST_MIN_TESTS_PASSED") {
@@ -59,7 +61,7 @@ impl SampleTest {
     /// number of overall tests is set to `10000` and the generator is created
     /// with a size of `100`.
     pub fn new() -> SampleTest {
-        let gen = Random::new(st_gen_size());
+        let gen = Random::new();
         let tests = st_tests();
         let max_tests = cmp::max(tests, st_max_tests());
         let min_tests_passed = st_min_tests_passed();
@@ -318,8 +320,11 @@ pub trait Testable<S>: 'static
 where
     S: Sample,
 {
+    /// Report a [`TestResult`] from a given value.
     fn result(&self, v: S::Output) -> TestResult;
 
+    /// Convenience function for running this [`Testable`] once on a random
+    /// value, and shrinking any failures.
     fn test_once(&self, s: &S, rng: &mut Random) -> TestResult
     where
         S::Output: Clone + Debug,
@@ -335,6 +340,8 @@ where
         }
     }
 
+    /// Iteratively shrink the given test result until the iteration limit is
+    /// reached or no further shrinkage is possible.
     fn shrink(&self, s: &S, r: TestResult, v: S::Output) -> TestResult
     where
         S::Output: Clone + Debug,

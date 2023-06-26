@@ -1,3 +1,5 @@
+//! Chained samplers for generating arbitrary `Chunk<Box<dyn Array>>` arrow chunks.
+
 use std::ops::Range;
 
 use arrow2::{array::Array, chunk::Chunk, datatypes::DataType};
@@ -68,10 +70,7 @@ where
                     .map(|data_type| array.with_len(len).sampler_from_data_type(&data_type))
                     .collect(),
             )
-            .wrap(
-                |chunk| Box::new(std::iter::once(chunk.to_vec())),
-                Chunk::new,
-            ),
+            .try_convert(Chunk::new, |chunk| Some(chunk.to_vec())),
         )
     }
 }
