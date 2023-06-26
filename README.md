@@ -1,4 +1,6 @@
-# sample-test: strategies and machinery for sample testing
+# sample-test: utilities for sample testing
+
+[![](https://docs.rs/sample-test/badge.svg)](https://docs.rs/sample-test/)
 
 Create tests that sample arbitrary data to produce counterexamples for a given
 proposition.
