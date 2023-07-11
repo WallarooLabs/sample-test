@@ -5,7 +5,7 @@
 Create tests that sample arbitrary data to produce counterexamples for a given
 proposition:
 
-```
+```rust
 use sample_std::VecSampler;
 use sample_test::{sample_test, TestResult};
 
