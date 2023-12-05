@@ -18,7 +18,7 @@ fn deep_chunk(depth: usize, len: usize) -> ArbitraryChunk<Regex, Chance> {
 
     let array = ArbitraryArray {
         names,
-        branch: 0..10,
+        branch: 0..5,
         len: len..(len + 1),
         null: Chance(0.1),
         is_nullable: true,

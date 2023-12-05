@@ -1,7 +1,7 @@
 [package]
 name = "sample-arrow2"
 description = "Samplers for arrow2 for use with sample-test"
-version = "0.17.1"
+version = "0.17.2"
 license = "Apache-2.0"
 edition = "2021"
 
@@ -9,7 +9,9 @@ edition = "2021"
 
 [dependencies]
 sample-std = { workspace = true }
-arrow2 = "0.17"
+# arrow2 = "0.17"
+# arrow2 = { source = "git+https://github.com/WallarooLabs/arrow2?branch=fmurphy/public-arrow-parquet-schema#2294fd35a20300a7d3d300e5ca10d0af75ad2537" }
+arrow2 = { git = "https://github.com/WallarooLabs/arrow2", branch = "fmurphy/public-arrow-parquet-schema" }
 
 [dev-dependencies]
 quickcheck="1.0"
