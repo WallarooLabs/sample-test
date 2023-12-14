@@ -48,7 +48,7 @@ impl JsonSampler {
 impl Sample for JsonSampler {
     type Output = Json;
 
-    fn generate(&self, g: &mut Random) -> Json {
+    fn generate(&mut self, g: &mut Random) -> Json {
         match g.gen_range(0..=3) {
             0 => Json::Bool(g.arbitrary()),
             1 => Json::Number(g.arbitrary()),

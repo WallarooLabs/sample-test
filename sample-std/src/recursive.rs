@@ -36,7 +36,7 @@ where
 {
     type Output = N;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         match &self.depth {
             Some(depth) => {
                 if depth.start > 0 {

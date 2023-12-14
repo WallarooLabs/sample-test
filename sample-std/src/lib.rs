@@ -20,7 +20,7 @@
 //! ```
 //! use sample_std::{Sample, Random};
 //!
-//! let s = 10..100;
+//! let mut s = 10..100;
 //! let v = s.generate(&mut Random::new());
 //! assert!(s.contains(&v));
 //! let mut shrunk = s.shrink(v);
@@ -160,7 +160,7 @@ pub trait Sample {
     type Output;
 
     /// Randomly generate the requested type.
-    fn generate(&self, g: &mut Random) -> Self::Output;
+    fn generate(&mut self, g: &mut Random) -> Self::Output;
 
     /// Shrink the given value into a "smaller" value. Defaults to an empty
     /// iterator (which represents that the value cannot be shrunk).
@@ -200,7 +200,7 @@ pub trait Sample {
     fn try_convert<T, I, F>(self, from: F, try_into: I) -> TryConvert<Self, F, I>
     where
         Self: Sized,
-        F: Fn(Self::Output) -> T + Copy,
+        F: Fn(Self::Output) -> T,
         I: Fn(T) -> Option<Self::Output>,
     {
         TryConvert {
@@ -249,7 +249,7 @@ pub trait Sample {
 /// See [`Sample::try_convert`].
 #[derive(Clone)]
 pub struct TryConvert<P, F, I> {
-    inner: P,
+    pub inner: P,
     from: F,
     try_into: I,
 }
@@ -257,13 +257,13 @@ pub struct TryConvert<P, F, I> {
 impl<P, F, I, T> Sample for TryConvert<P, F, I>
 where
     P: Sample,
-    F: Fn(P::Output) -> T + Copy,
+    F: Fn(P::Output) -> T,
     I: Fn(T) -> Option<P::Output>,
 {
     type Output = T;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
-        (self.from)(P::generate(&self.inner, g))
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
+        (self.from)(P::generate(&mut self.inner, g))
     }
 
     fn shrink(&self, v: Self::Output) -> Shrunk<Self::Output> {
@@ -271,7 +271,7 @@ where
             (self.try_into)(v)
                 .into_iter()
                 .flat_map(|v| P::shrink(&self.inner, v))
-                .map(self.from),
+                .map(&self.from),
         )
     }
 }
@@ -291,7 +291,7 @@ where
 {
     type Output = (A::Output, B::Output);
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         self.t.generate(g)
     }
 
@@ -358,8 +358,8 @@ where
     type Output = ($($name::Output),*,);
 
     #[allow(non_snake_case)]
-    fn generate(&self, r: &mut Random) -> Self::Output {
-        let ($(casey::lower!($name)),*,) = &self;
+    fn generate(&mut self, r: &mut Random) -> Self::Output {
+        let ($(casey::lower!($name)),*,) = self;
         ($(casey::lower!($name).generate(r)),*,)
     }
 
@@ -379,7 +379,7 @@ where
 {
     type Output = (A::Output,);
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         (self.0.generate(g),)
     }
 
@@ -420,7 +420,7 @@ where
 {
     type Output = Chained<S::Output, SS::Output>;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         let seed = self.supersampler.generate(g);
         let value = (self.transform)(seed.clone()).generate(g);
 
@@ -430,7 +430,7 @@ where
     fn shrink(&self, v: Self::Output) -> Shrunk<Self::Output> {
         Box::new(self.supersampler.shrink(v.seed).flat_map(|shrunk_seed| {
             let mut g = Random::new();
-            let sampler = (self.transform)(shrunk_seed.clone());
+            let mut sampler = (self.transform)(shrunk_seed.clone());
             (0..self.subsamples).map(move |_| Chained {
                 seed: shrunk_seed.clone(),
                 value: sampler.generate(&mut g),
@@ -442,8 +442,8 @@ where
 impl<T> Sample for Box<dyn Sample<Output = T>> {
     type Output = T;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
-        self.as_ref().generate(g)
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
+        self.as_mut().generate(g)
     }
 
     fn shrink(&self, v: Self::Output) -> Shrunk<'_, Self::Output> {
@@ -454,8 +454,8 @@ impl<T> Sample for Box<dyn Sample<Output = T>> {
 impl<T> Sample for Box<dyn Sample<Output = T> + Send + Sync> {
     type Output = T;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
-        self.as_ref().generate(g)
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
+        self.as_mut().generate(g)
     }
 
     fn shrink(&self, v: Self::Output) -> Shrunk<'_, Self::Output> {
@@ -471,26 +471,34 @@ pub struct Chance(pub f32);
 impl Sample for Chance {
     type Output = bool;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         g.gen_range(0.0..1.0) < self.0
     }
 }
 
 /// Bridge for creating a [`Sample`] from an [`Arbitrary`] type.
-#[derive(Clone)]
 pub struct ArbitrarySampler<T> {
-    size: Option<usize>,
+    gen: Gen,
     phantom: PhantomData<T>,
     validate: fn(&T) -> bool,
+}
+
+impl<T> Clone for ArbitrarySampler<T> {
+    fn clone(&self) -> Self {
+        ArbitrarySampler {
+            gen: Gen::new(self.gen.size()),
+            phantom: self.phantom.clone(),
+            validate: self.validate.clone(),
+        }
+    }
 }
 
 impl<T: Arbitrary> Sample for ArbitrarySampler<T> {
     type Output = T;
 
-    fn generate(&self, _: &mut Random) -> Self::Output {
-        let mut g = Gen::new(self.size.unwrap_or(100));
+    fn generate(&mut self, _: &mut Random) -> Self::Output {
         for _ in 0..1000 {
-            let value = Arbitrary::arbitrary(&mut g);
+            let value = Arbitrary::arbitrary(&mut self.gen);
             if (self.validate)(&value) {
                 return value;
             }
@@ -506,7 +514,7 @@ impl<T: Arbitrary> Sample for ArbitrarySampler<T> {
 /// Sampler for any type implementing [`Arbitrary`].
 pub fn arbitrary<T: Arbitrary>() -> ArbitrarySampler<T> {
     ArbitrarySampler {
-        size: None,
+        gen: Gen::new(100),
         phantom: PhantomData,
         validate: |_| true,
     }
@@ -515,7 +523,7 @@ pub fn arbitrary<T: Arbitrary>() -> ArbitrarySampler<T> {
 /// Sampler for non-NaN [f32]
 pub fn valid_f32() -> ArbitrarySampler<f32> {
     ArbitrarySampler {
-        size: None,
+        gen: Gen::new(100),
         phantom: PhantomData,
         validate: |f| !f.is_nan(),
     }
@@ -524,7 +532,7 @@ pub fn valid_f32() -> ArbitrarySampler<f32> {
 /// Sampler for non-NaN [f64]
 pub fn valid_f64() -> ArbitrarySampler<f64> {
     ArbitrarySampler {
-        size: None,
+        gen: Gen::new(100),
         phantom: PhantomData,
         validate: |f| !f.is_nan(),
     }
@@ -537,7 +545,7 @@ pub struct Always<T>(pub T);
 impl<T: Clone> Sample for Always<T> {
     type Output = T;
 
-    fn generate(&self, _: &mut Random) -> Self::Output {
+    fn generate(&mut self, _: &mut Random) -> Self::Output {
         self.0.clone()
     }
 }
@@ -550,7 +558,7 @@ impl<T: Clone> Sample for Always<T> {
 /// ```
 /// use sample_std::{Random, Sample, choice};
 ///
-/// let sampler = choice(["cora", "coraline"]);
+/// let mut sampler = choice(["cora", "coraline"]);
 /// let name = sampler.generate(&mut Random::new());
 /// assert!(name.starts_with("cora"));
 ///
@@ -578,7 +586,7 @@ where
 {
     type Output = T;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         g.choose(&self.choices).unwrap().clone()
     }
 
@@ -657,8 +665,9 @@ where
 {
     type Output = T;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
-        g.choose(&self.choices).unwrap().generate(g)
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
+        let ix = g.gen_range(0..self.choices.len());
+        self.choices[ix].generate(g)
     }
 
     fn shrink(&self, v: Self::Output) -> Shrunk<'_, Self::Output> {
@@ -674,7 +683,7 @@ where
 {
     type Output = T;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         g.gen_range(self.clone())
     }
 
@@ -713,7 +722,7 @@ impl Regex {
 impl Sample for Regex {
     type Output = String;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         self.dist.sample(&mut g.rng)
     }
 
@@ -755,7 +764,7 @@ where
 {
     type Output = Vec<T>;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         Iterator::map(0..self.length.generate(g), |_| self.el.generate(g)).collect()
     }
 
@@ -801,7 +810,7 @@ where
 
 /// See [`sample_all`].
 pub struct SampleAll<S> {
-    samplers: Vec<S>,
+    pub samplers: Vec<S>,
 }
 
 impl<S> Sample for SampleAll<S>
@@ -811,8 +820,8 @@ where
 {
     type Output = Vec<S::Output>;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
-        self.samplers.iter().map(|s| s.generate(g)).collect()
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
+        self.samplers.iter_mut().map(|s| s.generate(g)).collect()
     }
 
     fn shrink(&self, v: Self::Output) -> Shrunk<'_, Self::Output> {
