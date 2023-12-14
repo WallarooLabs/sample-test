@@ -22,7 +22,7 @@
 //! }
 //!
 //! let mut r = Random::new();
-//! let s = (0..10, 0..10);
+//! let mut s = (0..10, 0..10);
 //!
 //! sample_test(s, test as fn(usize, usize) -> bool);
 //! ```
