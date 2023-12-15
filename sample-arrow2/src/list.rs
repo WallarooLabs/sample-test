@@ -2,13 +2,76 @@
 
 use std::ops::Range;
 
-use crate::{array::ArraySampler, generate_validity};
+use crate::{array::ArraySampler, generate_validity, SampleLen, SetLen};
 use arrow2::{
     array::{Array, ListArray},
-    datatypes::DataType,
+    bitmap::Bitmap,
+    datatypes::{DataType, Field},
     offset::OffsetsBuffer,
 };
 use sample_std::{Random, Sample};
+
+pub struct ListWithLen<V, C, A, N> {
+    pub len: usize,
+    pub validity: V,
+    pub count: C,
+
+    pub inner: A,
+    pub inner_name: N,
+}
+
+impl<V: SetLen, C, A, N> SetLen for ListWithLen<V, C, A, N> {
+    fn set_len(&mut self, len: usize) {
+        self.len = len;
+        self.validity.set_len(len);
+    }
+}
+
+impl<V, C, A, N> Sample for ListWithLen<V, C, A, N>
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen,
+    C: Sample<Output = i32>,
+    A: Sample<Output = Box<dyn Array>> + SetLen,
+    N: Sample<Output = String>,
+{
+    type Output = Box<dyn Array>;
+
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
+        let mut offsets = vec![0];
+        let mut inner_len: i32 = 0;
+        for _ in 0..self.len {
+            let count = self.count.generate(g);
+            assert!(count >= 0);
+            inner_len += count;
+            offsets.push(inner_len);
+        }
+
+        self.inner.set_len(inner_len as usize);
+        let values = self.inner.generate(g);
+        let is_nullable = values.validity().is_some();
+        let inner_name = self.inner_name.generate(g);
+        let field = Field::new(inner_name, values.data_type().clone(), is_nullable);
+        let data_type = DataType::List(Box::new(field));
+
+        // SAFETY: see loop above. starts at zero, asserts all increments are positive.
+        let offsets = OffsetsBuffer::try_from(offsets).unwrap();
+        let validity = self.validity.generate(g);
+        ListArray::new(data_type, offsets, values, validity).boxed()
+    }
+
+    fn shrink(&self, _: Self::Output) -> Box<dyn Iterator<Item = Self::Output>> {
+        Box::new(std::iter::empty())
+    }
+}
+
+impl<V, C, A, N> SampleLen for ListWithLen<V, C, A, N>
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen,
+    C: Sample<Output = i32>,
+    A: Sample<Output = Box<dyn Array>> + SetLen,
+    N: Sample<Output = String>,
+{
+}
 
 pub struct ListSampler<V> {
     pub data_type: DataType,
@@ -23,7 +86,7 @@ where
 {
     type Output = Box<dyn Array>;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         let values = self.inner.generate(g);
         let len = self.len.generate(g);
         let mut ix = 0;
@@ -42,7 +105,7 @@ where
             }
         }
 
-        let validity = generate_validity(&self.null, g, len);
+        let validity = generate_validity(&mut self.null, g, len);
 
         ListArray::new(
             self.data_type.clone(),

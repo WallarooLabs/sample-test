@@ -4,6 +4,7 @@ use std::ops::Range;
 
 use arrow2::{
     array::{Array, PrimitiveArray},
+    bitmap::Bitmap,
     types::NativeType,
 };
 use sample_std::{
@@ -11,7 +12,147 @@ use sample_std::{
     Shrunk, VecSampler,
 };
 
-use crate::ArrowSampler;
+use crate::{ArrowLenSampler, ArrowSampler, SetLen};
+
+#[derive(Debug, Clone)]
+pub struct PrimitiveArraySampler<PT, V> {
+    len: usize,
+    inner: PT,
+    validity: V,
+}
+
+impl<PT, V: SetLen> SetLen for PrimitiveArraySampler<PT, V> {
+    fn set_len(&mut self, len: usize) {
+        self.len = len;
+        self.validity.set_len(len);
+    }
+}
+
+impl<PT, V> Sample for PrimitiveArraySampler<PT, V>
+where
+    PT: Sample,
+    PT::Output: NativeType,
+    V: Sample<Output = Option<Bitmap>> + SetLen,
+{
+    type Output = PrimitiveArray<PT::Output>;
+
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
+        let vec = (0..self.len).map(|_| self.inner.generate(g)).collect();
+        let mut arr = PrimitiveArray::from_vec(vec);
+        arr.set_validity(self.validity.generate(g));
+        arr
+    }
+
+    fn shrink(&self, _: Self::Output) -> Box<dyn Iterator<Item = Self::Output>> {
+        Box::new(std::iter::empty())
+    }
+}
+
+impl<PT, V> PrimitiveArraySampler<PT, V>
+where
+    PT: Sample + 'static,
+    PT::Output: NativeType,
+    V: Sample<Output = Option<Bitmap>> + SetLen + 'static,
+{
+    fn boxed(self) -> ArrowLenSampler {
+        fn unbox<T: NativeType>(boxed: Box<dyn Array>) -> Option<PrimitiveArray<T>> {
+            boxed.as_any().downcast_ref::<PrimitiveArray<T>>().cloned()
+        }
+        Box::new(self.try_convert(PrimitiveArray::boxed, unbox))
+    }
+}
+
+pub fn primitive_len_sampler<PT, V>(inner: PT, validity: V) -> ArrowLenSampler
+where
+    PT: Sample + 'static,
+    PT::Output: NativeType,
+    V: Sample<Output = Option<Bitmap>> + SetLen + 'static,
+{
+    PrimitiveArraySampler {
+        len: 0,
+        inner,
+        validity,
+    }
+    .boxed()
+}
+
+pub fn arbitrary_len_sampler<T, V>(validity: V) -> ArrowLenSampler
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen + 'static,
+    T: NativeType + Arbitrary,
+{
+    primitive_len_sampler(arbitrary::<T>(), validity)
+}
+
+pub fn valid_float_len_sampler<V>(valid: V) -> ArrowLenSampler
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen + Clone + 'static,
+{
+    Box::new(sampler_choice(vec![
+        // todo: f16
+        primitive_len_sampler(valid_f32(), valid.clone()),
+        primitive_len_sampler(valid_f64(), valid),
+    ]))
+}
+
+pub fn arbitrary_float_len_sampler<V>(valid: V) -> ArrowLenSampler
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen + Clone + 'static,
+{
+    Box::new(sampler_choice(vec![
+        // todo: f16
+        arbitrary_len_sampler::<f32, _>(valid.clone()),
+        arbitrary_len_sampler::<f32, _>(valid),
+    ]))
+}
+
+pub fn arbitrary_int_len_sampler<V>(valid: V) -> ArrowLenSampler
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen + Clone + 'static,
+{
+    Box::new(sampler_choice(vec![
+        arbitrary_len_sampler::<i8, _>(valid.clone()),
+        arbitrary_len_sampler::<i16, _>(valid.clone()),
+        arbitrary_len_sampler::<i32, _>(valid.clone()),
+        arbitrary_len_sampler::<i64, _>(valid.clone()),
+    ]))
+}
+
+// todo: arbitrary_monthsdaysnano_array
+
+pub fn arbitrary_uint_len_sampler<V>(valid: V) -> ArrowLenSampler
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen + Clone + 'static,
+{
+    Box::new(sampler_choice(vec![
+        arbitrary_len_sampler::<u8, _>(valid.clone()),
+        arbitrary_len_sampler::<u16, _>(valid.clone()),
+        arbitrary_len_sampler::<u32, _>(valid.clone()),
+        arbitrary_len_sampler::<u64, _>(valid.clone()),
+    ]))
+}
+
+pub fn valid_primitive_len<V>(valid: V) -> ArrowLenSampler
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen + Clone + 'static,
+{
+    Box::new(sampler_choice([
+        valid_float_len_sampler(valid.clone()),
+        arbitrary_int_len_sampler(valid.clone()),
+        arbitrary_uint_len_sampler(valid.clone()),
+    ]))
+}
+
+pub fn arbitrary_primitive_len<V>(valid: V) -> ArrowLenSampler
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen + Clone + 'static,
+{
+    Box::new(sampler_choice([
+        arbitrary_float_len_sampler(valid.clone()),
+        arbitrary_int_len_sampler(valid.clone()),
+        arbitrary_uint_len_sampler(valid.clone()),
+    ]))
+}
 
 #[derive(Debug, Clone)]
 pub struct ProtoNullablePrimitiveArray<PT> {
@@ -20,7 +161,7 @@ pub struct ProtoNullablePrimitiveArray<PT> {
 
 fn to_primitive<T>(vec: Vec<Option<T>>) -> PrimitiveArray<T>
 where
-    T: NativeType + Arbitrary,
+    T: NativeType,
 {
     PrimitiveArray::from_trusted_len_iter(vec.into_iter())
 }
@@ -32,7 +173,7 @@ where
 {
     type Output = PrimitiveArray<T>;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         to_primitive(self.inner.generate(g))
     }
 
@@ -54,7 +195,7 @@ where
 {
     type Output = PrimitiveArray<T>;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         PrimitiveArray::from_trusted_len_values_iter(self.inner.generate(g).into_iter())
     }
 
@@ -112,7 +253,7 @@ where
 {
     type Output = Box<dyn Array>;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         self.inner.generate(g).boxed()
     }
 
@@ -139,7 +280,7 @@ where
     V: Sample<Output = bool>,
 {
     type Output = Option<SI::Output>;
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         if self.null.generate(g) {
             None
         } else {
@@ -259,7 +400,7 @@ mod tests {
 
     #[test]
     fn gen_float() {
-        let gen = valid_float_array(50..51, Some(Chance(0.5)));
+        let mut gen = valid_float_array(50..51, Some(Chance(0.5)));
         let mut r = Random::new();
         let arr = gen.generate(&mut r);
         assert_eq!(arr, arr);

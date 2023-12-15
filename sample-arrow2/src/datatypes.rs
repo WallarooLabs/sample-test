@@ -18,7 +18,7 @@ where
 {
     type Output = Field;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         Field::new(
             self.names.generate(g),
             self.inner.generate(g),
@@ -39,7 +39,7 @@ where
 {
     type Output = DataType;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
         let size = self.size.generate(g);
         DataType::Struct((0..size).map(|_| self.field.generate(g)).collect())
     }

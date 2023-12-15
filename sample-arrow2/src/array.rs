@@ -2,15 +2,107 @@
 
 use std::ops::Range;
 
-use arrow2::{array::Array, datatypes::DataType};
-use sample_std::{valid_f32, valid_f64, Chained, Sample};
+use arrow2::{
+    array::{Array, FixedSizeListArray, ListArray},
+    bitmap::Bitmap,
+    datatypes::DataType,
+};
+use sample_std::{valid_f32, valid_f64, Always, Chained, Sample};
 
 use crate::{
     datatypes::DataTypeSampler,
-    list::ListSampler,
-    primitive::{arbitrary_boxed_primitive, boxed_primitive},
+    fixed_size_list::FixedSizeListWithLen,
+    list::{ListSampler, ListWithLen},
+    primitive::{
+        arbitrary_boxed_primitive, arbitrary_len_sampler, boxed_primitive, primitive_len_sampler,
+    },
     struct_::StructSampler,
+    AlwaysValid, ArrowLenSampler, SetLen,
 };
+
+pub fn sampler_from_example(array: &dyn Array) -> ArrowLenSampler {
+    match array.data_type() {
+        DataType::Float32 => primitive_len_sampler(valid_f32(), AlwaysValid),
+        DataType::Float64 => primitive_len_sampler(valid_f64(), AlwaysValid),
+        DataType::Int8 => arbitrary_len_sampler::<i8, _>(AlwaysValid),
+        DataType::Int16 => arbitrary_len_sampler::<i16, _>(AlwaysValid),
+        DataType::Int32 => arbitrary_len_sampler::<i32, _>(AlwaysValid),
+        DataType::Int64 => arbitrary_len_sampler::<i64, _>(AlwaysValid),
+        DataType::UInt8 => arbitrary_len_sampler::<u8, _>(AlwaysValid),
+        DataType::UInt16 => arbitrary_len_sampler::<u16, _>(AlwaysValid),
+        DataType::UInt32 => arbitrary_len_sampler::<u32, _>(AlwaysValid),
+        DataType::UInt64 => arbitrary_len_sampler::<u64, _>(AlwaysValid),
+        DataType::List(f) => {
+            let list = array.as_any().downcast_ref::<ListArray<i32>>().unwrap();
+            let min = list.offsets().lengths().min().unwrap_or(0) as i32;
+            let max = list.offsets().lengths().max().unwrap_or(0) as i32 + 1;
+            Box::new(ListWithLen {
+                len: array.len(),
+                validity: AlwaysValid,
+                count: min..max,
+                inner_name: Always(f.name.clone()),
+                inner: sampler_from_example(list.values().as_ref()),
+            })
+        }
+        DataType::FixedSizeList(f, count) => Box::new(FixedSizeListWithLen {
+            len: array.len(),
+            validity: AlwaysValid,
+            count: Always(*count),
+            inner_name: Always(f.name.clone()),
+            inner: sampler_from_example(
+                array
+                    .as_any()
+                    .downcast_ref::<FixedSizeListArray>()
+                    .unwrap()
+                    .values()
+                    .as_ref(),
+            ),
+        }),
+        dt => panic!("not implemented: {:?}", dt),
+    }
+}
+
+pub struct FromDataType<V, B> {
+    pub validity: V,
+
+    pub branch: B,
+}
+
+impl<V, B> FromDataType<V, B>
+where
+    V: Sample<Output = Option<Bitmap>> + SetLen + Clone + Send + Sync + 'static,
+    B: Sample<Output = i32> + Clone + Send + Sync + 'static,
+{
+    pub fn from_data_type(&self, data_type: &DataType) -> ArrowLenSampler {
+        match data_type {
+            DataType::Float32 => primitive_len_sampler(valid_f32(), self.validity.clone()),
+            DataType::Float64 => primitive_len_sampler(valid_f64(), self.validity.clone()),
+            DataType::Int8 => arbitrary_len_sampler::<i8, _>(self.validity.clone()),
+            DataType::Int16 => arbitrary_len_sampler::<i16, _>(self.validity.clone()),
+            DataType::Int32 => arbitrary_len_sampler::<i32, _>(self.validity.clone()),
+            DataType::Int64 => arbitrary_len_sampler::<i64, _>(self.validity.clone()),
+            DataType::UInt8 => arbitrary_len_sampler::<u8, _>(self.validity.clone()),
+            DataType::UInt16 => arbitrary_len_sampler::<u16, _>(self.validity.clone()),
+            DataType::UInt32 => arbitrary_len_sampler::<u32, _>(self.validity.clone()),
+            DataType::UInt64 => arbitrary_len_sampler::<u64, _>(self.validity.clone()),
+            DataType::List(f) => Box::new(ListWithLen {
+                len: 0,
+                validity: self.validity.clone(),
+                count: self.branch.clone(),
+                inner_name: Always(f.name.clone()),
+                inner: self.from_data_type(f.data_type()),
+            }),
+            DataType::FixedSizeList(f, count) => Box::new(FixedSizeListWithLen {
+                len: 0,
+                validity: self.validity.clone(),
+                count: Always(*count),
+                inner_name: Always(f.name.clone()),
+                inner: self.from_data_type(f.data_type()),
+            }),
+            dt => panic!("not implemented: {:?}", dt),
+        }
+    }
+}
 
 pub type ArraySampler = Box<dyn Sample<Output = Box<dyn Array>> + Send + Sync>;
 

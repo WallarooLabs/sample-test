@@ -19,9 +19,9 @@ where
 {
     type Output = Box<dyn Array>;
 
-    fn generate(&self, g: &mut Random) -> Self::Output {
-        let values: Vec<_> = self.values.iter().map(|sa| sa.generate(g)).collect();
-        let validity = generate_validity(&self.null, g, values[0].len());
+    fn generate(&mut self, g: &mut Random) -> Self::Output {
+        let values: Vec<_> = self.values.iter_mut().map(|sa| sa.generate(g)).collect();
+        let validity = generate_validity(&mut self.null, g, values[0].len());
 
         StructArray::new(self.data_type.clone(), values, validity).boxed()
     }
