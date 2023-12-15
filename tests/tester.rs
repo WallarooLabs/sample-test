@@ -12,8 +12,8 @@ fn test_testable() {
     }
 
     let mut r = Random::new();
-    let s = (0..10, 0..10);
-    assert!(Testable::test_once(&(test as fn(usize, usize) -> bool), &s, &mut r).is_success());
+    let mut s = (0..10, 0..10);
+    assert!(Testable::test_once(&(test as fn(usize, usize) -> bool), &mut s, &mut r).is_success());
 
     sample_test(s, test as fn(usize, usize) -> bool);
 }

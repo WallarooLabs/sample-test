@@ -111,7 +111,7 @@ impl SampleTest {
     ///
     /// (If you're using Rust's unit testing infrastructure, then you'll
     /// want to use the `sample_test` method, which will `panic!` on failure.)
-    pub fn sample_test_count<S, A>(&mut self, s: S, f: A) -> Result<u64, TestResult>
+    pub fn sample_test_count<S, A>(&mut self, mut s: S, f: A) -> Result<u64, TestResult>
     where
         A: Testable<S>,
         S: Sample,
@@ -122,7 +122,7 @@ impl SampleTest {
             if n_tests_passed >= self.tests {
                 break;
             }
-            match f.test_once(&s, &mut self.gen) {
+            match f.test_once(&mut s, &mut self.gen) {
                 TestResult { status: Pass, .. } => n_tests_passed += 1,
                 TestResult {
                     status: Discard, ..
@@ -325,7 +325,7 @@ where
 
     /// Convenience function for running this [`Testable`] once on a random
     /// value, and shrinking any failures.
-    fn test_once(&self, s: &S, rng: &mut Random) -> TestResult
+    fn test_once(&self, s: &mut S, rng: &mut Random) -> TestResult
     where
         S::Output: Clone + Debug,
     {
