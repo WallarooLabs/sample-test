@@ -16,4 +16,4 @@ casey = "0.4"
 
 [dev-dependencies]
 once_cell = "1.0"
-sample-test = { workspace = true }
+# sample-test = { workspace = true }
