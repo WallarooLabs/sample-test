@@ -7,7 +7,7 @@ edition = { workspace = true }
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace]
-members = ["sample-std", "sample-test-macros", "sample-arrow2"]
+members = ["sample-std", "sample-test-macros", "sample-arrow2", "sample-arrow-rs"]
 
 [workspace.dependencies]
 sample-test = { path = ".", version = "0.2" }
