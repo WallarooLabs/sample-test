@@ -1,0 +1,20 @@
+[package]
+name = "sample-arrow-rs"
+description = "Samplers for arrow-rs for use with sample-test"
+version = "55.2.0"
+license = "Apache-2.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+sample-std = { workspace = true }
+arrow-array = "55.2.0"
+arrow-schema = "55.2.0"
+arrow-data = "55.2.0"
+arrow-buffer = "55.2.0"
+
+[dev-dependencies]
+quickcheck="1.0"
+sample-test = { workspace = true }
+lazy_static = "1.4"
